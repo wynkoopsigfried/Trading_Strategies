@@ -1,0 +1,55 @@
+from AlgorithmImports import *
+
+class BitcoinTradingBot(QCAlgorithm):
+""" This class will inherit properties from QCAlgorithm that makes building this strategy more efficient """
+
+    def Initialize(self):
+
+        # Use Kraken as the brokerage. Other brokerages are available in QuantConnect.
+        self.SetBrokerageModel(BrokerageName.Kraken, AccountType.Cash)
+
+        # Set the cryptocurrency/equity to trade with.
+        self.crypto = self.AddCrypto("BTCUSD", Resolution.Daily)
+
+        # Create your indicator. Set it to a 50-day Simple Moving Average for this strategy.
+        self.sma = self.SMA("BTCUSD", 50, Resolution.Daily)
+
+        # Set the benchmark to compare the returns against. This helps you understand if you're generating alpha or not. 
+        self.SetBenchmark("BTCUSD")
+
+        # Warm up the indicator.
+        self.SetWarmUp(timedelta(50))
+
+        # Initialize the previous signal.
+        self.previous_signal = None
+
+
+
+    def OnData(self, data):
+
+        # Let the strategy warm up completely.
+        if self.IsWarmingUp:
+            return
+
+        # Check if the Simple Moving Average is ready.
+        if not self.sma.IsReady:
+            return
+
+        # Set the logic for trade entries; 'bullish' will mean: enter a trade, and 'bearish' will mean: do not enter a trade.
+        signal = "bullish" if self.crypto.Price > self.sma.Current.Value else "bearish"
+
+        # Check if the signal has changed. If it has, update the signal variable.
+        if signal != self.previous_signal:
+            self.previous_signal = signal
+
+            # Enter or exit trades based on the signal.
+            if signal == "bullish":
+                self.SetHoldings("BTCUSD", 0.97)  # Enter trade with 97% of entire portfolio. 
+            else:
+                # Get total Bitcoin holdings in portfolio. 
+                bitcoin_amount = self.Portfolio.CashBook["BTC"].Amount
+                sell_amount = (bitcoin_amount * 0.97)  # Set sell amount to 97% of Bitcoin holdings.
+                
+                # Market sell all Bitcoin holdings.
+                if bitcoin_amount > 0:
+                    self.MarketOrder("BTCUSD", -sell_amount)  
