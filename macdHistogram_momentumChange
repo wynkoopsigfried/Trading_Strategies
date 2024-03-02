@@ -1,0 +1,81 @@
+from clr import AddReference
+AddReference("System")
+AddReference("QuantConnect.Algorithm")
+AddReference("QuantConnect.Common")
+
+from AlgorithmImports import *
+from System import *
+from QuantConnect import *
+from QuantConnect.Data import *
+from QuantConnect.Algorithm import *
+from QuantConnect.Indicators import *
+
+import numpy as np
+import pandas as pd
+import pandas_ta as ta
+
+
+class MACDHistogramMomentum(QCAlgorithm):
+
+    """ 
+        This trading algorithm uses two different indicators for its trading logic: 
+        A 40 Day and 20 Day SMA, as well as the MACD Histogram. 
+
+        In order to enter a trade, the logic is as follows:
+        1) The asset must be in an 'up trend.' We define an up trend as the 20 Day 
+        SMA being above the 40 Day SMA.
+        2) There must be a change in the histogram's direction (color) from negative to positive.
+        When the color of the histogram changes from Dark Red to Light Red, indicating 
+        a change in direction.
+
+        To exit the trade, the logic is as follows:
+        1) When the histogram changes from a positive to a negative direction.
+        When the color of the histogram changes from Dark Green to Light Green -OR-
+        Light Red to Dark Red.
+    """
+
+    def Initialize(self):
+        #  For Backtesting
+        self.SetStartDate(2022, 1, 1)
+        self.SetEndDate(2023, 12, 12)
+        self.SetCash(100000) 
+
+        # Set Bitcoin as asset. Define a 40 Day and 20 Day SMA
+        self.crypto = self.AddCrypto("BTCUSD", Resolution.Daily)
+        self.sma = self.SMA("BTCUSD", 40, Resolution.Daily)
+        self.sma_fast = self.SMA("BTCUSD", 20, Resolution.Daily)
+
+    
+    def OnData(self, data):
+        # Create the pandas dataframe with Bitcoin data
+        history = self.History(self.Symbol("BTCUSD"), 100, Resolution.Daily)
+        history_df = pd.DataFrame()
+        history_df['open'] = history['open']
+        history_df['high'] = history['high']
+        history_df['low'] = history['low']
+        history_df['close'] = history['close']
+        
+        # Calculate MACD indicator
+        history_df.ta.macd(close='close', fast=12, slow=26, signal=9, append=True)
+
+        # Sets constants for each color of histogram bar, assigning an integer to each color.
+        DARKRED, LIGHTRED, DARKGREEN, LIGHTGREEN = 0, 1, 2, 3
+        history_df['MACDh_color'] = np.where((history_df['MACDh_12_26_9'] < 0) & (history_df['MACDh_12_26_9'] < history_df['MACDh_12_26_9'].shift(1)), DARKRED,
+                                      np.where((history_df['MACDh_12_26_9'] < 0) & (history_df['MACDh_12_26_9'] > history_df['MACDh_12_26_9'].shift(1)), LIGHTRED,
+                                      np.where((history_df['MACDh_12_26_9'] > 0) & (history_df['MACDh_12_26_9'] < history_df['MACDh_12_26_9'].shift(1)), LIGHTGREEN,
+                                      DARKGREEN))).astype(int)
+
+        # Collect the last two values of the MACD color in a variable to easily call in trade logic
+        last_two_colors = history_df["MACDh_color"].tail(2).values
+        
+        # Ensure the asset (Bitcoin) is in an up trend as defined by 40 Day and 20 Day SMA's
+        signal = "bullish" if self.crypto.Price > self.sma.Current.Value else "bearish"
+
+        # IF in a bullish up trend, and IF there is a shift from Dark Red to Light Red in the histogram, enter trade
+        if signal == "bullish":
+            if last_two_colors[0] == DARKRED and last_two_colors[1] == LIGHTRED and not self.Portfolio.Invested:
+                self.SetHoldings("BTCUSD", 0.95)  # enter the trade
+
+            # If there is a shift from Light Red to Dark Red -OR- from Dark Green to Light Green, exit the trade 
+            elif self.Portfolio.Invested and (last_two_colors[0] == LIGHTRED and last_two_colors[1] == DARKRED or last_two_colors[0] == DARKGREEN and last_two_colors[1] == LIGHTGREEN):
+                self.Liquidate("BTCUSD")  # exit the trade
